@@ -183,7 +183,7 @@ let away=store.get("itof26-away-v2",{1:{on:false,s:"12:30",e:"13:30"},2:{on:fals
 let myStands=store.get("itof26-staende-v2",[]);
 const today=new Date(); const iso=today.getFullYear()+"-"+String(today.getMonth()+1).padStart(2,"0")+"-"+String(today.getDate()).padStart(2,"0");
 const liveDay=iso===D.meta.tage["1"]?1:iso===D.meta.tage["2"]?2:0;
-let state={day:liveDay||store.get("itof26-day",1),view:"prog",filters:{tr:[],room:"",q:"",rec:false},map:{l:2,target:null,zoom:false}};
+let state={day:liveDay||store.get("itof26-day",1),view:"prog",filters:{tr:[],room:"",q:"",rec:false,past:false},map:{l:2,target:null,zoom:false}};
 const save=()=>{store.set("itof26-ablauf-v2",plan);store.set("itof26-away-v2",away);store.set("itof26-staende-v2",myStands);store.set("itof26-day",state.day)};
 
 const lvl=x=>RM[x.raum].ebene;
@@ -193,9 +193,15 @@ const sameShortSlot=(a,b)=>a.kurzvortrag&&b.kurzvortrag&&a.raum===b.raum&&a.s===
 const overlap=(a,b)=>a.s<b.e&&b.s<a.e&&!sameShortSlot(a,b);
 const conflicts=x=>plan.map(id=>BYID[id]).filter(y=>y&&y.id!==x.id&&y.tag===x.tag&&overlap(x,y));
 function inAway(x){const a=away[x.tag];return !!(a&&a.on&&x.s<m(a.e)&&m(a.s)<x.e)}
+const endDate=x=>new Date(`${D.meta.tage[String(x.tag)]}T${hm(x.e)}:00`);
+const startDate=x=>new Date(`${D.meta.tage[String(x.tag)]}T${hm(x.s)}:00`);
+const isPast=x=>endDate(x)<=new Date();
+const isLive=x=>startDate(x)<=new Date()&&!isPast(x);
 const timeLabel=x=>`${x.zeitGeschaetzt?"ca. ":""}${hm(x.s)}–${hm(x.e)}`;
 function flags(x,inPlan){
   const f=[];
+  if(isLive(x)) f.push('<span class="tag rec">läuft gerade</span>');
+  else if(isPast(x)) f.push('<span class="tag">vorbei</span>');
   if(x.kurzvortrag) f.push('<span class="tag">Kurzvortrag 10 min im Halbstunden-Slot</span>');
   if(x.zeitGeschaetzt) f.push('<span class="tag">Zeit aus Rasterposition geschätzt</span>');
   if(inPlan){const c=conflicts(x); if(c.length) f.push(`<span class="tag warn">Überschneidung mit ${c.length} Termin${c.length>1?"en":""}</span>`);}
@@ -219,7 +225,8 @@ const nowMin=()=>{const d=new Date();return d.getHours()*60+d.getMinutes()};
 
 function viewProg(){
   const d=state.day,f=state.filters;
-  let list=SES.filter(x=>x.tag===d);
+  const all=SES.filter(x=>x.tag===d); const pastN=all.filter(isPast).length;
+  let list=f.past?all:all.filter(x=>!isPast(x));
   if(f.tr.length) list=list.filter(x=>f.tr.includes(x.strang));
   if(f.room) list=list.filter(x=>x.raum===f.room);
   if(f.q){const q=f.q.toLowerCase();list=list.filter(x=>(x.titel+" "+x.mitwirkende).toLowerCase().includes(q))}
@@ -230,8 +237,13 @@ function viewProg(){
     <div class="chips">${Object.entries(D.straenge).filter(([k])=>k!=="PL").map(([k,t])=>`<button class="chip" data-ftr="${k}" aria-pressed="${f.tr.includes(k)}">${t.name}</button>`).join("")}</div>
     <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">
       <select data-f="room" aria-label="Raum" style="flex:1 1 180px;width:auto"><option value="">Alle Räume</option>${Object.entries(RM).filter(([k])=>k!=="ALL").map(([k,r])=>`<option value="${k}" ${f.room===k?"selected":""}>E${r.ebene} ${r.name}</option>`).join("")}</select>
-    </div></div>`;
-  if(!list.length) return h+`<div class="empty" style="margin-top:14px"><p>Keine Beiträge für diese Filter.</p><button class="btn" data-clear>Filter zurücksetzen</button></div>`;
+    </div>
+    ${pastN?`<div><button class="chip" data-fpast aria-pressed="${f.past}">${f.past?"Vergangene ausblenden":`Vergangene anzeigen (${pastN})`}</button></div>`:""}
+    </div>`;
+  if(!list.length){
+    if(!f.past&&pastN===all.length) return h+`<div class="empty" style="margin-top:14px"><p>Alle Beiträge dieses Tages sind vorbei.</p><button class="btn" data-fpast>Vergangene anzeigen</button></div>`;
+    return h+`<div class="empty" style="margin-top:14px"><p>Keine Beiträge für diese Filter.</p><button class="btn" data-clear>Filter zurücksetzen</button></div>`;
+  }
   let cur=null;
   for(const x of list){
     if(x.s!==cur){if(cur!==null)h+="</div>";cur=x.s;
@@ -335,7 +347,8 @@ document.addEventListener("click",e=>{
   if(ds.ftr){keep(()=>{const f=state.filters;f.tr=f.tr.includes(ds.ftr)?f.tr.filter(i=>i!==ds.ftr):[...f.tr,ds.ftr]});return}
   if("awayAdd" in ds){away[state.day].on=true;render();return}
   if("awayOff" in ds){away[state.day].on=false;render();return}
-  if("clear" in ds){state.filters={tr:[],room:"",q:"",rec:false};render();return}
+  if("clear" in ds){state.filters={tr:[],room:"",q:"",rec:false,past:state.filters.past};render();return}
+  if("fpast" in ds){keep(()=>{state.filters.past=!state.filters.past});return}
   if("reset" in ds){if(confirm("Deinen Ablauf für beide Tage leeren?")){plan=[];render()}return}
   if("copy" in ds){
     const txt=[1,2].flatMap(d=>[d===1?"Dienstag 22.9.":"Mittwoch 23.9.",...plan.map(id=>BYID[id]).filter(x=>x&&x.tag===d).sort((a,b)=>a.s-b.s).map(x=>`${timeLabel(x)}  E${RM[x.raum].ebene||"-"} ${RM[x.raum].name}: ${x.titel}`),""]).join("\n");
@@ -494,7 +507,7 @@ render();
 if(location.protocol.startsWith("http")){
   fetch("itof26-programm.json",{cache:"no-store"}).then(r=>r.ok?r.json():null).then(j=>{if(j&&j.beitraege){D=j;prepare();plan=plan.filter(id=>BYID[id]);render()}}).catch(()=>{});
 }
-if(liveDay) setInterval(()=>{if(state.view==="plan"&&!(document.activeElement&&document.activeElement.matches("input")))render()},60000);
+if(liveDay) setInterval(()=>{if((state.view==="plan"||state.view==="prog")&&!(document.activeElement&&document.activeElement.matches("input")))render()},60000);
 </script>
 </body>
 </html>
